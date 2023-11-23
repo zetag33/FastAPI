@@ -1,11 +1,7 @@
-# Clase en vídeo: https://youtu.be/_y9qQZXE24A?t=5382
-
-### Users API ###
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-# Inicia el server: uvicorn users:app --reload
+# uvicorn users:app --reload
 
 router = APIRouter()
 
@@ -18,18 +14,18 @@ class User(BaseModel):
     age: int
 
 
-users_list = [User(id=1, name="Brais", surname="Moure", url="https://moure.dev", age=35),
-              User(id=2, name="Moure", surname="Dev",
-                   url="https://mouredev.com", age=35),
-              User(id=3, name="Brais", surname="Dahlberg", url="https://haakon.com", age=33)]
+users_list = [User(id=1, name="Jerry", surname="Sauzal", url="https://jerry.com", age=35),
+              User(id=2, name="Carmen", surname="M",
+                   url="https://carmenm.com", age=35),
+              User(id=3, name="Julio", surname="Martinez", url="https://juliomartinez.com", age=33)]
 
 
 @router.get("/usersjson")
 async def usersjson():  # Creamos un JSON a mano
-    return [{"name": "Brais", "surname": "Moure", "url": "https://moure.dev", "age": 35},
-            {"name": "Moure", "surname": "Dev",
-                "url": "https://mouredev.com", "age": 35},
-            {"name": "Haakon", "surname": "Dahlberg", "url": "https://haakon.com", "age": 33}]
+    return [{"name": "Jerry", "surname": "Sauzal", "url": "https://jerry.com", "age": 35},
+            {"name": "Carmen", "surname": "M",
+                "url": "https://carmenm.com", "age": 35},
+            {"name": "Julio", "surname": "Martinez", "url": "https://juliomartinez.com", "age": 33}]
 
 
 @router.get("/users")
@@ -46,8 +42,6 @@ async def user(id: int):
 async def user(id: int):
     return search_user(id)
 
-
-# Clase en vídeo: https://youtu.be/_y9qQZXE24A?t=8529
 
 
 @router.post("/user/", response_model=User, status_code=201)
