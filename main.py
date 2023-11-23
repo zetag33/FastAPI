@@ -25,4 +25,4 @@ async def root():
 
 @app.get("/url")
 async def url():
-    return {"url": "https://ejemplo.com}
+    return {"url": "https://ejemplo.com"}
