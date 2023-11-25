@@ -1,11 +1,23 @@
+import schedule
+import templates
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from pydantic import BaseModel
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
-#pip install "python-jose[cryptography]"
-#pip install "passlib[bcrypt]"
+
+from jinja2 import Environment, FileSystemLoader
+from starlette.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+from starlette.requests import Request
+
+
+from db.client import db_client, tokens
+import time
+
+# pip install "python-jose[cryptography]"
+# pip install "passlib[bcrypt]"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_DURATION = 3
 SECRET = "201d573bd7d1344d3a3bfce1550b69102fd11be3db6d379508b6cccc58ea230b"
@@ -18,7 +30,13 @@ oauth2 = OAuth2PasswordBearer(tokenUrl="login")
 
 crypt = CryptContext(schemes=["bcrypt"])
 
-revoked_tokens = set()
+mongo = db_client
+revoked_tokens = tokens
+
+exception = HTTPException(
+    status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario no es correcto")
+
+
 class User(BaseModel):
     username: str
     full_name: str
@@ -30,38 +48,21 @@ class UserDB(User):
     password: str
 
 
-users_db = {
-    "Jerry": {
-        "username": "Jerry",
-        "full_name": "Jerry del Sauzal",
-        "email": "jerry.jerry.com",
-        "disabled": False,
-        "password": "$2a$12$m/adJzFOUAM3VPYt8yRfnOR.Psz8W2piGit9/VVePmi5smaqYAkTy"
-    },
-    "Carmen": {
-        "username": "Carmen",
-        "full_name": "Carmen Sanchez",
-        "email": "carmen@gmail.com",
-        "disabled": False,
-        "password": "$2a$12$XHQSN8PsDjluRJYU/gZsUuRDqY5LxbFCppLlrSyA.9RXg6YkzjLTa"
-    }
-}
-
-exception = HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario no es correcto")
-
 def search_user_db(username: str):
-    if username in users_db:
-        return UserDB(**users_db[username])
+    user_data = mongo.find_one({"username": username})
+
+    if user_data:
+        return UserDB(**user_data)
 
 
 def search_user(username: str):
-    if username in users_db:
-        return User(**users_db[username])
+    user_data = mongo.find_one({"username": username})
+
+    if user_data:
+        return User(**user_data)
 
 
 async def auth_user(token: str = Depends(oauth2)):
-
     exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciales de autenticación inválidas",
@@ -79,9 +80,9 @@ async def auth_user(token: str = Depends(oauth2)):
         username = jwt.decode(token, SECRET, algorithms=[ALGORITHM]).get("sub")
         if username is None:
             raise exception
-        if token in revoked_tokens:
+        if tokens.find_one({token: {"$exists": True}}):
             raise exception_invalidated
-        if username not in users_db:
+        if not search_user(username):
             raise exception_deleted
 
 
@@ -99,6 +100,7 @@ async def current_user(user: User = Depends(auth_user)):
 
     return user
 
+
 async def get_token(authorization: str = Header(None, convert_underscores=True)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -110,33 +112,51 @@ async def get_token(authorization: str = Header(None, convert_underscores=True))
     return token
 
 
+# Login page
+@router.get("/login", response_class=HTMLResponse)
+async def login_form(request: Request):
+    env = Environment(loader=FileSystemLoader('templates'))
+    templates = Jinja2Templates(directory='templates')
+    # Render the login form HTML template
+    template = env.get_template('login_teamplate.html')
+    context = {'request': request}
+    html = template.render(context)
+    return HTMLResponse(html)
+
+
 @router.post("/login")
-async def login(form: OAuth2PasswordRequestForm = Depends()):
+async def login(request: Request , form: OAuth2PasswordRequestForm = Depends()):
+    try:
+        env = Environment(loader=FileSystemLoader('templates'))
+        templates = Jinja2Templates(directory='templates')
 
-    user_db = users_db.get(form.username)
-    if not user_db:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario no es correcto")
+        user_db = search_user(form.username)
+        if not user_db:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario no es correcto")
 
-    user = search_user_db(form.username)
+        user = search_user_db(form.username)
 
-    if not crypt.verify(form.password, user.password):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="La contraseña no es correcta")
+        if not crypt.verify(form.password, user.password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="La contraseña no es correcta")
 
-    access_token = {"sub": user.username,
-                    "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_DURATION)}
-
-    return {"access_token": jwt.encode(access_token, SECRET, algorithm=ALGORITHM), "token_type": "bearer"}
+        access_token = {"sub": user.username,
+                        "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_DURATION)}
+        token = jwt.encode(access_token, SECRET, algorithm=ALGORITHM)
+        template = env.get_template('succesful_login.html')
+        context = {'request': request}
+        html = template.render(context)
+        return HTMLResponse(html,headers={"token": f"Bearer {token}"})
+    except HTTPException as e:
+        # Handle login errors
+        return HTMLResponse(e.detail, status_code=e.status_code)
 
 
 @router.get("/users/me")
 async def me(user: User = Depends(current_user)):
     return user
 
-@router.get("/users/all")
-async def get_users(user: User = Depends(current_user)):
-    return users_db
 
 @router.post("/create_user")
 async def me(user: UserDB):
@@ -145,20 +165,22 @@ async def me(user: UserDB):
     password = crypt.hash(user.password)
     user.password = password
     name = user.username
-    users_db[user.username] = user.model_dump()
-    returned_user = User(**users_db[user.username])
+    mongo.insert_one(user.model_dump())
+    returned_user = User(**user.model_dump())
     return returned_user
+
 
 @router.delete("/delete_user")
 async def delete(user: User = Depends(current_user)):
     if type(search_user(user.username)) != User:
         raise Exception
-    name = user.username
-    del users_db[name]
+    mongo.delete_one({"username": user.username})
     return {"Success": "Deleted user succesfully"}
 
+
 @router.put("/update_user")
-async def update_user(updated_user: UserDB, current_user: User = Depends(current_user), token: str = Depends(get_token)):
+async def update_user(updated_user: UserDB, current_user: User = Depends(current_user),
+                      token: str = Depends(get_token)):
     if current_user.username != updated_user.username:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -166,10 +188,16 @@ async def update_user(updated_user: UserDB, current_user: User = Depends(current
     password = crypt.hash(updated_user.password)
     updated_user.password = password
 
-    del users_db[updated_user.username]
-    users_db[updated_user.username] = updated_user.model_dump()
-    revoked_tokens.add(token)
+    mongo.delete_one({"username": updated_user.username})
+    mongo.insert_one(updated_user.model_dump())
+    revoked_tokens.insert_one({token: {}})
 
     # Return the updated user information and the new token
-    return {"user": User(**users_db[updated_user.username])}
+    return {"user": User(updated_user.model_dump())}
+
+
+def empty_tokens_database():
+    # Remove all documents from the 'tokens' collection
+    tokens.delete_many({})
+
 
